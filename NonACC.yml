@@ -1,0 +1,153 @@
+# Comprehensive Pyxel Test Configuration
+# With noise models commented out for selective activation
+
+cmos_detector:
+  geometry:
+    row: 2392                          # pixel
+    col: 1596                          # pixel
+    pixel_horz_size: 15.04             # um
+    pixel_vert_size: 15.04             # um
+    pixel_scale: 17235                 # arcsec/pixel
+    total_thickness: 40.0              # um
+  characteristics:
+    quantum_efficiency: 1            # OI QE as default
+    adc_bit_resolution: 16             # bits
+    adc_voltage_range: [0.0, 10.0]     # V
+    charge_to_volt_conversion: 1.0e-6 # V/e (1 microvolt per electron)
+    pre_amplification: 50         # V/V (will be amplified in pipeline)
+    full_well_capacity: 51000        # e (1M electrons)
+  environment:
+    temperature: 300                   # K
+
+pipeline:
+  # =========================
+  # PHOTON COLLECTION STAGE
+  # =========================
+  photon_collection:
+    - name: load_image
+      func: pyxel.models.photon_collection.load_image
+      enabled: true
+      arguments:
+        image_file: "validation_image.fits"  # Will be updated dynamically
+        multiplier: 1                    
+        time_scale: 1
+        convert_to_photons: false
+        bit_resolution: 16
+        align: center
+    
+    # PHOTON SHOT NOISE (Poisson) - COMMENTED OUT
+    # Uncomment to add realistic photon noise
+    - name: shot_noise
+      func: pyxel.models.photon_collection.shot_noise
+      enabled: false
+      arguments:
+        type: "poisson"                    # Poisson noise (realistic)
+        seed: null                         # Random seed (null = random)
+
+  # =========================
+  # CHARGE GENERATION STAGE
+  # =========================
+  charge_generation:
+    - name: convert_photons
+      func: pyxel.models.charge_generation.simple_conversion
+      enabled: true
+      arguments:
+        quantum_efficiency: null         # Use detector QE
+        binomial_sampling: false         # Disable for simplicity
+        seed: null
+    
+    # DARK CURRENT - COMMENTED OUT
+    # Uncomment to add thermal dark current
+    - name: dark_current
+      func: pyxel.models.charge_generation.simple_dark_current
+      enabled: false
+      arguments:
+        dark_rate: 1                     # e-/pixel/second (adjust as needed)
+        seed: null                         # Random seed
+
+    # COSMIC RAYS - COMMENTED OUT
+    # Uncomment to add cosmic ray hits
+    # - name: cosmic_rays
+    #   func: pyxel.models.charge_generation.cosmix
+    #   enabled: false
+    #   arguments:
+    #     simulation_mode: "cosmic_ray"       # cosmic_ray, cosmics, radioactive_decay, snowflakes
+    #     running_mode: "stopping"           # stopping, stepsize, geant4, plotting
+    #     particle_type: "proton"            # proton, alpha, ion
+    #     particles_per_second: 0.1          # Cosmic ray rate (adjust as needed)
+    #     initial_energy: "random"           # Energy in MeV or "random"
+    #     incident_angles: ["random", "random"]  # [alpha, beta] angles
+    #     starting_position: ["random", "random", "random"]  # [x, y, z] positions
+    #     ionization_energy: 3.6             # Mean ionization energy (eV)
+    #     progressbar: false                 # Show progress bar
+    #     seed: null                         # Random seed
+
+  # =========================
+  # CHARGE COLLECTION STAGE
+  # =========================
+  charge_collection:
+    - name: simple_collection
+      func: pyxel.models.charge_collection.simple_collection
+      enabled: true
+    
+    - name: full_well
+      func: pyxel.models.charge_collection.simple_full_well
+      enabled: true
+  
+    
+    # FIXED PATTERN NOISE - COMMENTED OUT
+    # Uncomment to add pixel non-uniformity
+    # - name: fixed_pattern_noise
+    #   func: pyxel.models.charge_collection.fixed_pattern_noise
+    #   enabled: false
+    #   arguments:
+    #     fixed_pattern_noise_factor: 0.01   # 1% variation (adjust as needed)
+    #     seed: null                         # Random seed
+    #     align: center                      # Alignment method
+
+  # =========================
+  # CHARGE MEASUREMENT STAGE
+  # =========================
+  charge_measurement:
+    - name: amplify_signal
+      func: pyxel.models.charge_measurement.simple_measurement
+      enabled: true
+      arguments:
+        gain: null                       # Use detector conversion factor
+    
+    # READOUT NOISE (CMOS-specific) - COMMENTED OUT
+    # Uncomment to add realistic readout noise
+    # - name: readout_noise
+    #   func: pyxel.models.charge_measurement.output_node_noise_cmos
+    #   enabled: true
+    #   arguments:
+    #     readout_noise: 5.0                 # Mean readout noise in electrons
+    #     readout_noise_std: 1.0             # Std deviation in electrons
+    #     seed: null                         # Random seed
+
+  # =========================
+  # READOUT ELECTRONICS STAGE
+  # =========================
+  readout_electronics:
+    # AMPLIFIER - ENABLED
+    # This provides controllable amplification
+    - name: amplifier
+      func: pyxel.models.readout_electronics.simple_amplifier
+      enabled: true
+      # Note: Uses detector's pre_amplification value automatically
+    
+    # ADC - ENABLED
+    - name: digitize
+      func: pyxel.models.readout_electronics.simple_adc
+      enabled: true
+      arguments:
+        data_type: uint16               # 16-bit output (0-65535 ADU)
+
+# =========================
+# EXPOSURE CONFIGURATION
+# =========================
+exposure:
+  readout:
+    times: [1]                        # Exposure time in seconds
+    non_destructive: true
+    start_time: 0.0
