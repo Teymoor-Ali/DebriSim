@@ -10,7 +10,7 @@ DebriSim is a Python-based application for **space-situational awareness**, debr
 - **Debris-Detection Simulation** – Photon-to-electron conversion modelling for optical sensors  
 - **Visibility Analysis** – Two-horizon access criterion with Earth-occlusion calculations  
 - **Data Pipeline** – Import/export debris and emissions data in multiple formats  
-- **High-fidelity Coordinates** – Seamless ECI ↔ ECEF conversions (WGS-84)  
+- **Sensor Simulation** – Simulator Sensoe Noise with Pyxel Library  
 
 ---
 
