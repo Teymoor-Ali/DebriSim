@@ -52,7 +52,7 @@ cd debrisim
 # Set up a virtual environment
 python -m venv debrisim-env
 # Windows:
-debrisim-env\Scriptsctivate
+debrisim-env\Scripts\activate
 # macOS / Linux:
 source debrisim-env/bin/activate
 
@@ -95,9 +95,6 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
    *Visibility Analysis Tab →* Run Two-Horizon analysis, then export access periods / matrices.
 
 ---
-
-## License
-DebriSim is released under the **MIT License** – see [`LICENSE`](LICENSE) for full text.
 
 ---
 

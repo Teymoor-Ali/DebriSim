@@ -39,6 +39,32 @@ import glob
 import json
 import csv
 import copy
+def detect_emission_type_from_filename(filename):
+    """
+    Detect emission type from filename patterns.
+    Returns 'OI' for oxygen emission, 'Al' for aluminum emission, or 'Unknown' if not detected.
+    """
+    filename_lower = filename.lower()
+    
+    # Check for aluminum patterns first (more specific)
+    aluminum_patterns = ['ali_combined', 'ali', 'al_', '_al_', '_al.', 'aluminum']
+    for pattern in aluminum_patterns:
+        if pattern in filename_lower:
+            return 'Al'
+    
+    # Check for oxygen patterns
+    oxygen_patterns = ['oi_', '_oi_', '_oi.', 'oxygen']
+    for pattern in oxygen_patterns:
+        if pattern in filename_lower:
+            return 'OI'
+    
+    # Simple checks (less specific, so done last)
+    if '_al' in filename_lower or 'al_' in filename_lower:
+        return 'Al'
+    if '_oi' in filename_lower or 'oi_' in filename_lower:
+        return 'OI'
+        
+    return 'Unknown'
 
 def run_exposure_mode(config):
     try:
@@ -436,20 +462,19 @@ class BatchResultsPanel(QGroupBox):
         self.results_text.setTextCursor(cursor)
         self.results_text.ensureCursorVisible()
         QApplication.processEvents()
-
 class SingleFrameWorker(QThread):
-    """Worker for single frame processing using batch-style logic"""
+    """Worker for single frame processing using batch-style logic with auto emission detection"""
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
     progress = pyqtSignal(str)
 
-    def __init__(self, config, image_data, emission_type, oi_qe, al_qe, auto_qe_enabled, original_data=None):
+    def __init__(self, config, image_data, detected_emission_type, oi_qe, al_qe, auto_qe_enabled, original_data=None):
         super().__init__()
         # Use deep copy just like batch processing
         self.config = copy.deepcopy(config)
         self.image_data = image_data.copy()
         self.original_data = original_data.copy() if original_data is not None else None
-        self.emission_type = emission_type
+        self.detected_emission_type = detected_emission_type
         self.oi_qe = oi_qe
         self.al_qe = al_qe
         self.auto_qe_enabled = auto_qe_enabled
@@ -460,15 +485,19 @@ class SingleFrameWorker(QThread):
         try:
             self.temp_dir = tempfile.mkdtemp(prefix="pyxel_single_")
             
-            if self.auto_qe_enabled:
+            if self.auto_qe_enabled and self.detected_emission_type != 'Unknown':
                 self.progress.emit("Updating detector QE...")
                 qe_updated = self.update_pyxel_detector_qe()
                 if qe_updated:
-                    self.progress.emit(f"Applied QE: {self.oi_qe if self.emission_type == 'OI' else self.al_qe:.3f}")
+                    applied_qe = self.oi_qe if self.detected_emission_type == 'OI' else self.al_qe
+                    self.progress.emit(f"Applied QE: {applied_qe:.3f} for {self.detected_emission_type} emission")
                 else:
                     self.progress.emit("QE update skipped (manual mode)")
             else:
-                self.progress.emit("Using manual QE from YAML...")
+                if self.detected_emission_type == 'Unknown':
+                    self.progress.emit("Unknown emission type - using manual QE from YAML...")
+                else:
+                    self.progress.emit("Using manual QE from YAML...")
             
             self.progress.emit("Preparing image data...")
             fits_file_path = self.ensure_image_available_for_pyxel()
@@ -507,9 +536,9 @@ class SingleFrameWorker(QThread):
             analysis_results = self.analyze_pyxel_results(final_image, bucket_ds)
             
             # Add emission info the same way as batch
-            analysis_results['emission_type'] = self.emission_type
-            if self.auto_qe_enabled:
-                analysis_results['applied_qe'] = self.oi_qe if self.emission_type == "OI" else self.al_qe
+            analysis_results['emission_type'] = self.detected_emission_type
+            if self.auto_qe_enabled and self.detected_emission_type != 'Unknown':
+                analysis_results['applied_qe'] = self.oi_qe if self.detected_emission_type == "OI" else self.al_qe
             else:
                 analysis_results['applied_qe'] = "YAML"
             analysis_results['oi_qe_setting'] = self.oi_qe
@@ -541,11 +570,11 @@ class SingleFrameWorker(QThread):
 
     def update_pyxel_detector_qe(self):
         """Use the exact same QE update method as batch processing, but check if auto QE is enabled"""
-        if not self.auto_qe_enabled:
+        if not self.auto_qe_enabled or self.detected_emission_type == 'Unknown':
             return False
             
         try:
-            target_qe = self.oi_qe if self.emission_type == "OI" else self.al_qe
+            target_qe = self.oi_qe if self.detected_emission_type == "OI" else self.al_qe
             
             detector = None
             if hasattr(self.config, 'cmos_detector'):
@@ -757,19 +786,17 @@ class SingleFrameWorker(QThread):
                 shutil.rmtree(self.temp_dir)
         except Exception as e:
             pass
-
 class BatchProcessingWorker(QThread):
     progress = pyqtSignal(str, int, int)
     file_completed = pyqtSignal(str, object)
     error = pyqtSignal(str, str)
     finished = pyqtSignal(object)
 
-    def __init__(self, config, input_dir, output_dir, emission_type, oi_qe, al_qe, auto_qe_enabled):
+    def __init__(self, config, input_dir, output_dir, oi_qe, al_qe, auto_qe_enabled):
         super().__init__()
         self.config = copy.deepcopy(config)
         self.input_dir = input_dir
         self.output_dir = output_dir
-        self.emission_type = emission_type
         self.oi_qe = oi_qe
         self.al_qe = al_qe
         self.auto_qe_enabled = auto_qe_enabled
@@ -780,22 +807,22 @@ class BatchProcessingWorker(QThread):
             'total_files': 0,
             'successful_files': 0,
             'failed_files': 0,
+            'oi_files_processed': 0,
+            'al_files_processed': 0,
+            'unknown_files_processed': 0,
             'total_peak_adu': 0,
             'total_center_adu': 0,
             'max_peak_adu': 0,
             'max_snr': 0,
-            'emission_type': emission_type,
-            'applied_qe': (oi_qe if emission_type == "OI" else al_qe) if auto_qe_enabled else "YAML",
-            'auto_qe_enabled': auto_qe_enabled
+            'auto_qe_enabled': auto_qe_enabled,
+            'oi_qe': oi_qe,
+            'al_qe': al_qe
         }
         self._simulation_mutex = QMutex()
 
     def run(self):
         try:
             self.temp_dir = tempfile.mkdtemp(prefix="pyxel_batch_")
-            
-            if self.auto_qe_enabled:
-                self.update_pyxel_detector_qe()
             
             self.initialize_csv_streaming()
             
@@ -806,8 +833,20 @@ class BatchProcessingWorker(QThread):
             for i, (filepath, relative_path) in enumerate(npy_files):
                 try:
                     filename = os.path.basename(filepath)
-                    qe_mode = f"QE: {self.summary_stats['applied_qe']:.3f}" if self.auto_qe_enabled else "Manual QE"
-                    self.progress.emit(f"Processing {filename}... (Emission: {self.emission_type}, {qe_mode})", i, total_files)
+                    
+                    # Detect emission type for this file
+                    detected_emission = detect_emission_type_from_filename(filename)
+                    
+                    # Determine which QE to use
+                    if self.auto_qe_enabled and detected_emission != 'Unknown':
+                        target_qe = self.oi_qe if detected_emission == 'OI' else self.al_qe
+                        qe_info = f"Auto QE: {target_qe:.3f}"
+                        # Update detector QE for this file
+                        self.update_pyxel_detector_qe(detected_emission)
+                    else:
+                        qe_info = "Manual QE from YAML"
+                    
+                    self.progress.emit(f"Processing {filename}... (Emission: {detected_emission}, {qe_info})", i, total_files)
                     
                     data = np.load(filepath, allow_pickle=True)
                     
@@ -848,9 +887,10 @@ class BatchProcessingWorker(QThread):
                     
                     analysis_results = self.analyze_pyxel_results(final_image, bucket_ds, filepath, data)
                     
-                    analysis_results['emission_type'] = self.emission_type
-                    if self.auto_qe_enabled:
-                        analysis_results['applied_qe'] = self.summary_stats['applied_qe']
+                    # Add emission-specific info
+                    analysis_results['emission_type'] = detected_emission
+                    if self.auto_qe_enabled and detected_emission != 'Unknown':
+                        analysis_results['applied_qe'] = target_qe
                     else:
                         analysis_results['applied_qe'] = "YAML"
                     analysis_results['oi_qe_setting'] = self.oi_qe
@@ -858,7 +898,7 @@ class BatchProcessingWorker(QThread):
                     analysis_results['auto_qe_enabled'] = self.auto_qe_enabled
                     
                     self.write_result_to_csv(analysis_results)
-                    self.update_summary_stats(analysis_results)
+                    self.update_summary_stats(analysis_results, detected_emission)
                     self.save_individual_results(filepath, relative_path, final_image, analysis_results)
                     
                     try:
@@ -890,13 +930,13 @@ class BatchProcessingWorker(QThread):
                     pass
             self.cleanup_temp_directory()
 
-    def update_pyxel_detector_qe(self):
-        """Update QE only if auto QE is enabled"""
-        if not self.auto_qe_enabled:
+    def update_pyxel_detector_qe(self, detected_emission):
+        """Update QE only if auto QE is enabled and emission is known"""
+        if not self.auto_qe_enabled or detected_emission == 'Unknown':
             return False
             
         try:
-            target_qe = self.oi_qe if self.emission_type == "OI" else self.al_qe
+            target_qe = self.oi_qe if detected_emission == "OI" else self.al_qe
             
             detector = None
             if hasattr(self.config, 'cmos_detector'):
@@ -908,6 +948,16 @@ class BatchProcessingWorker(QThread):
             
             if detector and hasattr(detector, 'characteristics'):
                 detector.characteristics.quantum_efficiency = target_qe
+                
+                # Also update the pipeline model directly
+                if hasattr(self.config.pipeline, 'charge_generation'):
+                    for item in self.config.pipeline.charge_generation:
+                        if hasattr(item, 'name') and item.name == 'convert_photons':
+                            if not hasattr(item, 'arguments'):
+                                item.arguments = {}
+                            item.arguments['quantum_efficiency'] = target_qe
+                            break
+                
                 return True
             else:
                 return False
@@ -915,11 +965,37 @@ class BatchProcessingWorker(QThread):
         except Exception as e:
             return False
 
+    def update_summary_stats(self, analysis_results, detected_emission):
+        try:
+            self.summary_stats['successful_files'] += 1
+            
+            # Track emission type counts
+            if detected_emission == 'OI':
+                self.summary_stats['oi_files_processed'] += 1
+            elif detected_emission == 'Al':
+                self.summary_stats['al_files_processed'] += 1
+            else:
+                self.summary_stats['unknown_files_processed'] += 1
+            
+            peak_adu = analysis_results.get('peak_adu', 0)
+            center_adu = analysis_results.get('center_pixel_adu', 0)
+            snr = analysis_results.get('snr', 0)
+            
+            self.summary_stats['total_peak_adu'] += peak_adu
+            self.summary_stats['total_center_adu'] += center_adu
+            self.summary_stats['max_peak_adu'] = max(self.summary_stats['max_peak_adu'], peak_adu)
+            
+            if snr != float('inf'):
+                self.summary_stats['max_snr'] = max(self.summary_stats['max_snr'], snr)
+                
+        except Exception as e:
+            pass
+
     def initialize_csv_streaming(self):
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             qe_mode = "auto" if self.auto_qe_enabled else "manual"
-            csv_path = os.path.join(self.output_dir, f"batch_pyxel_analysis_{self.emission_type}_{qe_mode}_{timestamp}.csv")
+            csv_path = os.path.join(self.output_dir, f"batch_pyxel_analysis_mixed_emissions_{qe_mode}_{timestamp}.csv")
             
             self.csv_file = open(csv_path, 'w', newline='', encoding='utf-8')
             self.csv_writer = csv.writer(self.csv_file)
@@ -1013,29 +1089,12 @@ class BatchProcessingWorker(QThread):
 
     def write_error_to_csv(self, filename, error_message):
         try:
-            row = [filename, 'ERROR', self.emission_type, self.summary_stats['applied_qe'], 
+            detected_emission = detect_emission_type_from_filename(filename)
+            row = [filename, 'ERROR', detected_emission, 'N/A', 
                    self.auto_qe_enabled, self.oi_qe, self.al_qe, datetime.now().strftime("%Y%m%d_%H%M%S"), 
                    error_message] + [''] * 47
             self.csv_writer.writerow(row)
             self.csv_file.flush()
-        except Exception as e:
-            pass
-
-    def update_summary_stats(self, analysis_results):
-        try:
-            self.summary_stats['successful_files'] += 1
-            
-            peak_adu = analysis_results.get('peak_adu', 0)
-            center_adu = analysis_results.get('center_pixel_adu', 0)
-            snr = analysis_results.get('snr', 0)
-            
-            self.summary_stats['total_peak_adu'] += peak_adu
-            self.summary_stats['total_center_adu'] += center_adu
-            self.summary_stats['max_peak_adu'] = max(self.summary_stats['max_peak_adu'], peak_adu)
-            
-            if snr != float('inf'):
-                self.summary_stats['max_snr'] = max(self.summary_stats['max_snr'], snr)
-                
         except Exception as e:
             pass
 
@@ -1047,7 +1106,7 @@ class BatchProcessingWorker(QThread):
                 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             qe_mode = "auto" if self.auto_qe_enabled else "manual"
-            summary_path = os.path.join(self.output_dir, f"batch_summary_{self.emission_type}_{qe_mode}_{timestamp}.json")
+            summary_path = os.path.join(self.output_dir, f"batch_summary_mixed_emissions_{qe_mode}_{timestamp}.json")
             
             with open(summary_path, 'w') as f:
                 json.dump(self.summary_stats, f, indent=2)
@@ -1245,7 +1304,7 @@ class BatchProcessingWorker(QThread):
                 
         except Exception as e:
             pass
-
+        
 class BatchProcessingTab(QWidget):
     def __init__(self, parent_window=None):
         super().__init__()
@@ -1290,7 +1349,7 @@ class BatchProcessingTab(QWidget):
         file_list_layout.setContentsMargins(0, 0, 0, 0)
         file_list_layout.setSpacing(3)
         
-        file_list_layout.addWidget(QLabel("Files found:"))
+        file_list_layout.addWidget(QLabel("Files found (emission type auto-detected):"))
         
         self.file_list = QListWidget()
         self.file_list.setMinimumHeight(200)
@@ -1323,9 +1382,9 @@ class BatchProcessingTab(QWidget):
         qe_layout.setHorizontalSpacing(10)
         
         # Add Auto QE checkbox for batch processing
-        self.auto_qe_checkbox = QCheckBox("Automatically apply QE values")
+        self.auto_qe_checkbox = QCheckBox("Automatically apply QE values based on detected emission")
         self.auto_qe_checkbox.setChecked(True)
-        self.auto_qe_checkbox.setToolTip("When checked, QE values will be automatically applied to YAML config.\nWhen unchecked, QE values from YAML file will be used.")
+        self.auto_qe_checkbox.setToolTip("When checked, QE values will be automatically applied based on detected emission type.\nWhen unchecked, QE values from YAML file will be used.")
         self.auto_qe_checkbox.toggled.connect(self.on_auto_qe_toggled)
         qe_layout.addRow(self.auto_qe_checkbox)
         
@@ -1338,7 +1397,7 @@ class BatchProcessingTab(QWidget):
         self.oi_qe_input.setToolTip("Quantum Efficiency for OI emission (777.3 nm)")
         self.oi_qe_input.valueChanged.connect(self.update_process_button_state)
         oi_layout.addWidget(self.oi_qe_input)
-        oi_layout.addWidget(QLabel("(777.3 nm)"))
+        oi_layout.addWidget(QLabel("(777.3 nm) - Applied to OI files"))
         oi_layout.addStretch()
         
         al_layout = QHBoxLayout()
@@ -1350,21 +1409,13 @@ class BatchProcessingTab(QWidget):
         self.al_qe_input.setToolTip("Quantum Efficiency for Al emission (395.0 nm)")
         self.al_qe_input.valueChanged.connect(self.update_process_button_state)
         al_layout.addWidget(self.al_qe_input)
-        al_layout.addWidget(QLabel("(395.0 nm)"))
+        al_layout.addWidget(QLabel("(395.0 nm) - Applied to Al files"))
         al_layout.addStretch()
-        
-        self.emission_type_combo = QComboBox()
-        self.emission_type_combo.addItem("OI Emission (777.3 nm)", "OI")
-        self.emission_type_combo.addItem("Al Emission (395.0 nm)", "Al")
-        self.emission_type_combo.setToolTip("Select emission type for batch processing")
-        self.emission_type_combo.setMaximumWidth(200)
-        self.emission_type_combo.currentTextChanged.connect(self.update_process_button_state)
         
         qe_layout.addRow("OI QE:", oi_layout)
         qe_layout.addRow("Al QE:", al_layout)
-        qe_layout.addRow("Emission Type:", self.emission_type_combo)
         
-        self.qe_info_label = QLabel("QE values will be automatically applied during processing")
+        self.qe_info_label = QLabel("QE values will be automatically applied based on detected emission type per file")
         self.qe_info_label.setStyleSheet("color: #666; font-style: italic; font-size: 10px;")
         self.qe_info_label.setWordWrap(True)
         qe_layout.addRow(self.qe_info_label)
@@ -1387,7 +1438,7 @@ class BatchProcessingTab(QWidget):
     def on_auto_qe_toggled(self, checked):
         """Update UI when auto QE checkbox is toggled"""
         if checked:
-            self.qe_info_label.setText("QE values will be automatically applied during processing")
+            self.qe_info_label.setText("QE values will be automatically applied based on detected emission type per file")
             self.qe_info_label.setStyleSheet("color: #666; font-style: italic; font-size: 10px;")
         else:
             self.qe_info_label.setText("QE values from YAML configuration will be used (manual mode)")
@@ -1396,7 +1447,6 @@ class BatchProcessingTab(QWidget):
         # Enable/disable QE input controls
         self.oi_qe_input.setEnabled(checked)
         self.al_qe_input.setEnabled(checked)
-        self.emission_type_combo.setEnabled(checked)
         
         self.update_process_button_state()
     
@@ -1429,6 +1479,8 @@ class BatchProcessingTab(QWidget):
         
         try:
             npy_files = []
+            emission_counts = {'OI': 0, 'Al': 0, 'Unknown': 0}
+            
             for root, dirs, files in os.walk(input_dir):
                 for file in files:
                     if file.endswith('.npy'):
@@ -1437,20 +1489,46 @@ class BatchProcessingTab(QWidget):
                             if fnmatch.fnmatch(file, filter_pattern):
                                 full_path = os.path.join(root, file)
                                 relative_path = os.path.relpath(full_path, input_dir)
-                                npy_files.append((full_path, relative_path))
+                                emission_type = detect_emission_type_from_filename(file)
+                                emission_counts[emission_type] += 1
+                                npy_files.append((full_path, relative_path, emission_type))
                         else:
                             if filter_pattern.lower() in file.lower():
                                 full_path = os.path.join(root, file)
                                 relative_path = os.path.relpath(full_path, input_dir)
-                                npy_files.append((full_path, relative_path))
+                                emission_type = detect_emission_type_from_filename(file)
+                                emission_counts[emission_type] += 1
+                                npy_files.append((full_path, relative_path, emission_type))
             
             npy_files.sort()
             
-            for full_path, relative_path in npy_files:
-                item = QListWidgetItem(relative_path)
+            for full_path, relative_path, emission_type in npy_files:
+                display_text = f"{relative_path} [{emission_type}]"
+                item = QListWidgetItem(display_text)
                 item.setData(Qt.UserRole, full_path)
-                item.setToolTip(f"Full path: {full_path}")
+                item.setToolTip(f"Full path: {full_path}\nDetected emission: {emission_type}")
+                
+                # Color code by emission type
+                if emission_type == 'OI':
+                    item.setForeground(QColor('#0066cc'))
+                elif emission_type == 'Al':
+                    item.setForeground(QColor('#cc6600'))
+                else:
+                    item.setForeground(QColor('#cc0000'))
+                
                 self.file_list.addItem(item)
+            
+            # Update status with emission counts
+            total_files = len(npy_files)
+            status_text = f"Found {total_files} files: {emission_counts['OI']} OI, {emission_counts['Al']} Al"
+            if emission_counts['Unknown'] > 0:
+                status_text += f", {emission_counts['Unknown']} Unknown"
+            
+            self.progress_label.setText(status_text)
+            if emission_counts['Unknown'] > 0:
+                self.progress_label.setStyleSheet("color: orange; font-weight: bold; padding: 4px;")
+            else:
+                self.progress_label.setStyleSheet("color: green; font-weight: bold; padding: 4px;")
                 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Error scanning directory: {str(e)}")
@@ -1475,17 +1553,30 @@ class BatchProcessingTab(QWidget):
             self.progress_label.setText("Select output directory")
             self.progress_label.setStyleSheet("color: orange; font-weight: bold; padding: 4px;")
         else:
-            emission_type = self.emission_type_combo.currentData()
             auto_qe = self.auto_qe_checkbox.isChecked()
+            qe_text = "Auto QE per file" if auto_qe else "Manual QE"
             
-            if auto_qe:
-                qe_value = self.oi_qe_input.value() if emission_type == "OI" else self.al_qe_input.value()
-                qe_text = f"QE: {qe_value:.3f}"
+            # Count emission types in current file list
+            oi_count = al_count = unknown_count = 0
+            for i in range(self.file_list.count()):
+                item_text = self.file_list.item(i).text()
+                if '[OI]' in item_text:
+                    oi_count += 1
+                elif '[Al]' in item_text:
+                    al_count += 1
+                else:
+                    unknown_count += 1
+            
+            status_text = f"Ready to process {self.file_list.count()} files ({oi_count} OI, {al_count} Al"
+            if unknown_count > 0:
+                status_text += f", {unknown_count} Unknown"
+            status_text += f") with {qe_text}"
+            
+            self.progress_label.setText(status_text)
+            if unknown_count > 0:
+                self.progress_label.setStyleSheet("color: orange; font-weight: bold; padding: 4px;")
             else:
-                qe_text = "Manual QE"
-            
-            self.progress_label.setText(f"Ready to process {self.file_list.count()} files with {emission_type} emission ({qe_text})")
-            self.progress_label.setStyleSheet("color: green; font-weight: bold; padding: 4px;")
+                self.progress_label.setStyleSheet("color: green; font-weight: bold; padding: 4px;")
     
     def start_batch_processing(self):
         if not self.parent_window or not self.parent_window.config:
@@ -1494,7 +1585,6 @@ class BatchProcessingTab(QWidget):
         
         input_dir = self.dir_path_edit.text()
         output_dir = self.output_dir_edit.text()
-        emission_type = self.emission_type_combo.currentData()
         oi_qe = self.oi_qe_input.value()
         al_qe = self.al_qe_input.value()
         auto_qe_enabled = self.auto_qe_checkbox.isChecked()
@@ -1509,30 +1599,47 @@ class BatchProcessingTab(QWidget):
             QMessageBox.critical(self, "Directory Error", f"Cannot create output directory: {str(e)}")
             return
         
-        qe_info = f"QE: {oi_qe if emission_type == 'OI' else al_qe:.3f}" if auto_qe_enabled else "Manual QE from YAML"
+        # Count emission types for confirmation dialog
+        oi_count = al_count = unknown_count = 0
+        for i in range(self.file_list.count()):
+            item_text = self.file_list.item(i).text()
+            if '[OI]' in item_text:
+                oi_count += 1
+            elif '[Al]' in item_text:
+                al_count += 1
+            else:
+                unknown_count += 1
+        
+        qe_info = f"Auto QE (OI:{oi_qe:.3f}, Al:{al_qe:.3f})" if auto_qe_enabled else "Manual QE from YAML"
+        
+        confirm_text = (f"Process all .npy files with automatic emission detection?\n\n"
+                       f"Input: {input_dir}\n"
+                       f"Output: {output_dir}\n"
+                       f"Found: {self.file_list.count()} files\n"
+                       f"  • OI emission files: {oi_count}\n"
+                       f"  • Al emission files: {al_count}")
+        
+        if unknown_count > 0:
+            confirm_text += f"\n  • Unknown emission files: {unknown_count} (will use manual QE)"
+        
+        confirm_text += (f"\nAuto QE: {'Yes' if auto_qe_enabled else 'No'}\n"
+                        f"OI QE: {oi_qe:.3f}\n"
+                        f"Al QE: {al_qe:.3f}\n"
+                        f"Applied QE: {qe_info}\n\n"
+                        f"{'QE values will be dynamically applied per file based on detected emission type.' if auto_qe_enabled else 'QE values from YAML will be used.'}\n"
+                        f"Results will be streamed directly to CSV for memory efficiency.\n"
+                        f"This may take a long time!")
         
         reply = QMessageBox.question(
-            self, "Confirm Batch Processing",
-            f"Process all .npy files with {emission_type} emission settings?\n\n"
-            f"Input: {input_dir}\n"
-            f"Output: {output_dir}\n"
-            f"Found: {self.file_list.count()} files\n"
-            f"Emission Type: {emission_type}\n"
-            f"Auto QE: {'Yes' if auto_qe_enabled else 'No'}\n"
-            f"OI QE: {oi_qe:.3f}\n"
-            f"Al QE: {al_qe:.3f}\n"
-            f"Applied QE: {qe_info}\n\n"
-            f"{'QE values will be dynamically applied to YAML configuration.' if auto_qe_enabled else 'QE values from YAML will be used.'}\n"
-            f"Results will be streamed directly to CSV for memory efficiency.\n"
-            f"This may take a long time!",
+            self, "Confirm Batch Processing", confirm_text,
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply != QMessageBox.Yes:
             return
         
-        qe_mode_text = "auto QE" if auto_qe_enabled else "manual QE"
-        self.progress_label.setText(f"Starting batch processing with {emission_type} emission ({qe_mode_text})...")
+        qe_mode_text = "auto QE per file" if auto_qe_enabled else "manual QE"
+        self.progress_label.setText(f"Starting batch processing with {qe_mode_text}...")
         self.progress_label.setStyleSheet("color: blue; font-weight: bold; padding: 4px;")
         
         if self.parent_window and hasattr(self.parent_window, 'batch_process_button'):
@@ -1542,7 +1649,6 @@ class BatchProcessingTab(QWidget):
             self.parent_window.config,
             input_dir,
             output_dir,
-            emission_type,
             oi_qe,
             al_qe,
             auto_qe_enabled
@@ -1577,12 +1683,12 @@ class BatchProcessingTab(QWidget):
         
         successful_count = summary_stats.get('successful_files', 0)
         total_count = summary_stats.get('total_files', 0)
-        emission_type = summary_stats.get('emission_type', 'Unknown')
-        applied_qe = summary_stats.get('applied_qe', 0)
         auto_qe_enabled = summary_stats.get('auto_qe_enabled', False)
+        oi_processed = summary_stats.get('oi_files_processed', 0)
+        al_processed = summary_stats.get('al_files_processed', 0)
         
-        qe_text = f"QE:{applied_qe:.3f}" if auto_qe_enabled else "Manual QE"
-        self.progress_label.setText(f"Batch complete ({emission_type}, {qe_text}): {successful_count}/{total_count} successful")
+        qe_text = "Auto QE per file" if auto_qe_enabled else "Manual QE"
+        self.progress_label.setText(f"Batch complete ({qe_text}): {successful_count}/{total_count} successful ({oi_processed} OI, {al_processed} Al)")
         self.progress_label.setStyleSheet("color: green; font-weight: bold; padding: 4px;")
         
         if self.parent_window and hasattr(self.parent_window, 'batch_process_button'):
@@ -1593,16 +1699,16 @@ class BatchProcessingTab(QWidget):
             self.parent_window.batch_results_panel.batch_finished(summary_stats)
         
         if successful_count > 0:
-            qe_mode_text = "automatic QE" if auto_qe_enabled else "manual QE from YAML"
+            qe_mode_text = "automatic QE per file" if auto_qe_enabled else "manual QE from YAML"
             QMessageBox.information(
                 self, "Batch Complete",
                 f"Batch processing completed!\n\n"
-                f"Emission Type: {emission_type}\n"
                 f"QE Mode: {qe_mode_text}\n"
-                f"Applied QE: {applied_qe if auto_qe_enabled else 'From YAML'}\n"
+                f"OI files processed: {oi_processed}\n"
+                f"Al files processed: {al_processed}\n"
                 f"Successful: {successful_count}/{total_count}\n"
                 f"Results automatically saved to CSV in output directory.\n"
-                f"{'QE values were dynamically applied during processing.' if auto_qe_enabled else 'QE values from YAML were used.'}"
+                f"{'QE values were dynamically applied per file based on detected emission type.' if auto_qe_enabled else 'QE values from YAML were used.'}"
             )
         else:
             QMessageBox.warning(
@@ -1611,7 +1717,6 @@ class BatchProcessingTab(QWidget):
                 f"Successful: {successful_count}/{total_count}\n"
                 f"Check the results log for details"
             )
-
 class PgImageView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1834,7 +1939,6 @@ class PgImageView(QWidget):
     def reset_view(self):
         if self.current_data is not None:
             self.image_view.autoRange()
-
 class LoadImageTab(QWidget):
     def __init__(self, parent_window=None):
         super().__init__()
@@ -1847,7 +1951,11 @@ class LoadImageTab(QWidget):
         
         status_layout = QFormLayout()
         self.data_label = QLabel("Not loaded")
+        self.emission_detection_label = QLabel("No file loaded")
+        self.emission_detection_label.setStyleSheet("font-weight: bold;")
+        
         status_layout.addRow("Image Data:", self.data_label)
+        status_layout.addRow("Detected Emission:", self.emission_detection_label)
         file_layout.addLayout(status_layout)
         
         control_layout = QVBoxLayout()
@@ -1863,7 +1971,7 @@ class LoadImageTab(QWidget):
         btn_layout.addWidget(self.load_fits_btn)
         control_layout.addLayout(btn_layout)
         
-        info_label = QLabel("Load NumPy (.npy) or FITS (.fits) files containing image data. The image will be displayed in the main view.")
+        info_label = QLabel("Load NumPy (.npy) or FITS (.fits) files. Emission type (OI/Al) will be automatically detected from filename.")
         info_label.setStyleSheet("color: blue; font-style: italic;")
         info_label.setWordWrap(True)
         control_layout.addWidget(info_label)
@@ -1871,15 +1979,15 @@ class LoadImageTab(QWidget):
         file_layout.addLayout(control_layout)
         layout.addWidget(file_group)
         
-        qe_group = QGroupBox("Single Exposure QE Settings")
+        qe_group = QGroupBox("Quantum Efficiency Settings")
         qe_layout = QFormLayout(qe_group)
         qe_layout.setSpacing(8)
         qe_layout.setHorizontalSpacing(10)
         
         # Add Auto QE checkbox for single exposure
-        self.auto_qe_checkbox = QCheckBox("Automatically apply QE values")
+        self.auto_qe_checkbox = QCheckBox("Automatically apply QE values based on detected emission")
         self.auto_qe_checkbox.setChecked(True)
-        self.auto_qe_checkbox.setToolTip("When checked, QE values will be automatically applied to YAML config.\nWhen unchecked, QE values from YAML file will be used.")
+        self.auto_qe_checkbox.setToolTip("When checked, QE values will be automatically applied based on detected emission type.\nWhen unchecked, QE values from YAML file will be used.")
         self.auto_qe_checkbox.toggled.connect(self.on_auto_qe_toggled)
         qe_layout.addRow(self.auto_qe_checkbox)
         
@@ -1891,7 +1999,7 @@ class LoadImageTab(QWidget):
         self.oi_qe_input.setMaximumWidth(100)
         self.oi_qe_input.setToolTip("Quantum Efficiency for OI emission (777.3 nm)")
         oi_layout.addWidget(self.oi_qe_input)
-        oi_layout.addWidget(QLabel("(777.3 nm)"))
+        oi_layout.addWidget(QLabel("(777.3 nm) - Applied when OI detected"))
         oi_layout.addStretch()
         
         al_layout = QHBoxLayout()
@@ -1902,27 +2010,20 @@ class LoadImageTab(QWidget):
         self.al_qe_input.setMaximumWidth(100)
         self.al_qe_input.setToolTip("Quantum Efficiency for Al emission (395.0 nm)")
         al_layout.addWidget(self.al_qe_input)
-        al_layout.addWidget(QLabel("(395.0 nm)"))
+        al_layout.addWidget(QLabel("(395.0 nm) - Applied when Al detected"))
         al_layout.addStretch()
-        
-        self.emission_type_combo = QComboBox()
-        self.emission_type_combo.addItem("OI Emission (777.3 nm)", "OI")
-        self.emission_type_combo.addItem("Al Emission (395.0 nm)", "Al")
-        self.emission_type_combo.setToolTip("Select emission type for single exposure")
-        self.emission_type_combo.setMaximumWidth(200)
         
         qe_layout.addRow("OI QE:", oi_layout)
         qe_layout.addRow("Al QE:", al_layout)
-        qe_layout.addRow("Emission Type:", self.emission_type_combo)
         
-        self.qe_info_label = QLabel("These QE values will be used for single exposure simulation")
+        self.qe_info_label = QLabel("QE values will be automatically selected based on detected emission type")
         self.qe_info_label.setStyleSheet("color: #666; font-style: italic; font-size: 10px;")
         self.qe_info_label.setWordWrap(True)
         qe_layout.addRow(self.qe_info_label)
         
         layout.addWidget(qe_group)
         
-        exposure_info_label = QLabel("After loading data and setting QE, click 'Perform Exposure' to run Pyxel simulation")
+        exposure_info_label = QLabel("After loading data, click 'Perform Exposure' to run Pyxel simulation with auto-detected emission settings")
         exposure_info_label.setStyleSheet("color: green; font-style: italic;")
         exposure_info_label.setWordWrap(True)
         layout.addWidget(exposure_info_label)
@@ -1930,11 +2031,13 @@ class LoadImageTab(QWidget):
         layout.addStretch()
         
         self.numpy_data = None
+        self.detected_emission_type = 'Unknown'
+        self.current_filename = ''
     
     def on_auto_qe_toggled(self, checked):
         """Update UI when auto QE checkbox is toggled"""
         if checked:
-            self.qe_info_label.setText("These QE values will be used for single exposure simulation")
+            self.qe_info_label.setText("QE values will be automatically selected based on detected emission type")
             self.qe_info_label.setStyleSheet("color: #666; font-style: italic; font-size: 10px;")
         else:
             self.qe_info_label.setText("QE values from YAML configuration will be used (manual mode)")
@@ -1943,14 +2046,28 @@ class LoadImageTab(QWidget):
         # Enable/disable QE input controls
         self.oi_qe_input.setEnabled(checked)
         self.al_qe_input.setEnabled(checked)
-        self.emission_type_combo.setEnabled(checked)
     
     def get_qe_settings(self):
-        emission_type = self.emission_type_combo.currentData()
+        """Get QE settings - now returns detected emission type"""
         oi_qe = self.oi_qe_input.value()
         al_qe = self.al_qe_input.value()
         auto_qe_enabled = self.auto_qe_checkbox.isChecked()
-        return emission_type, oi_qe, al_qe, auto_qe_enabled
+        return self.detected_emission_type, oi_qe, al_qe, auto_qe_enabled
+    
+    def update_emission_detection_display(self, filename):
+        """Update the emission detection display"""
+        self.detected_emission_type = detect_emission_type_from_filename(filename)
+        self.current_filename = filename
+        
+        if self.detected_emission_type == 'OI':
+            self.emission_detection_label.setText("OI (777.3 nm)")
+            self.emission_detection_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+        elif self.detected_emission_type == 'Al':
+            self.emission_detection_label.setText("Al (395.0 nm)")
+            self.emission_detection_label.setStyleSheet("font-weight: bold; color: #cc6600;")
+        else:
+            self.emission_detection_label.setText("Unknown - check filename")
+            self.emission_detection_label.setStyleSheet("font-weight: bold; color: #cc0000;")
     
     def update_geometry_display(self, config):
         pass
@@ -2100,6 +2217,10 @@ class LoadImageTab(QWidget):
             return False
     
     def _process_loaded_data(self, data, path):
+        # Update emission detection first
+        filename = os.path.basename(path)
+        self.update_emission_detection_display(filename)
+        
         if self.parent_window:
             if self.parent_window.original_data is None:
                 self.parent_window.original_data = data.copy()
@@ -2114,26 +2235,30 @@ class LoadImageTab(QWidget):
             
             emission_type, oi_qe, al_qe, auto_qe_enabled = self.get_qe_settings()
             
-            if auto_qe_enabled:
+            if auto_qe_enabled and emission_type != 'Unknown':
                 applied_qe = oi_qe if emission_type == "OI" else al_qe
                 qe_text = f"QE: {applied_qe:.3f}"
             else:
-                qe_text = "Manual QE"
+                qe_text = "Manual QE" if not auto_qe_enabled else "Unknown emission - Manual QE"
             
-            info_text = (f"Loaded {os.path.basename(path)} (shape={data.shape}, "
+            info_text = (f"Loaded {filename} (shape={data.shape}, "
                         f"{non_zero_pixels}/{total_pixels} non-zero pixels, max={max_value:.2f}) "
-                        f"- Ready for {emission_type} emission ({qe_text})")
+                        f"- Detected: {emission_type} ({qe_text})")
             self.parent_window.info_label.setText(info_text)
-            self.parent_window.info_label.setStyleSheet("color: green; font-weight: bold;")
+            
+            if emission_type == 'Unknown':
+                self.parent_window.info_label.setStyleSheet("color: orange; font-weight: bold;")
+            else:
+                self.parent_window.info_label.setStyleSheet("color: green; font-weight: bold;")
             
             self.parent_window.update_batch_button_state()
                 
         self.numpy_data = data
-        self.data_label.setText(f"Loaded: {os.path.basename(path)} (shape={data.shape})")
+        self.data_label.setText(f"Loaded: {filename} (shape={data.shape})")
         self.data_label.setStyleSheet("color: green;")
         
         if self.parent_window:
-            self.parent_window.statusBar().showMessage(f"Image data loaded successfully: {os.path.basename(path)}")
+            self.parent_window.statusBar().showMessage(f"Image data loaded successfully: {filename}")
         
         return True
 
@@ -2447,7 +2572,7 @@ class MainWindow(QMainWindow):
         controls_layout.setSpacing(10)
         
         self.apply_button = QPushButton("Perform Exposure")
-        self.apply_button.clicked.connect(self.run_exposure_mode)
+        self.apply_button.clicked.connect(self.run_exposure_mode_updated)
         self.apply_button.setStyleSheet("""
             QPushButton {
                 background-color: #ff6600; 
@@ -3101,8 +3226,8 @@ class MainWindow(QMainWindow):
         
         dialog.exec_()
 
-    def run_exposure_mode(self):
-        """New single frame processing using batch-style logic with manual QE control"""
+    def run_exposure_mode_updated(self):
+        """Updated single frame processing using automatic emission detection"""
         if self.simulation_in_progress:
             QMessageBox.warning(self, "Warning", "Simulation already in progress.")
             return
@@ -3115,8 +3240,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No image data loaded to process.")
             return
         
-        emission_type, oi_qe, al_qe, auto_qe_enabled = self.load_image_tab.get_qe_settings()
-        self.current_emission_type = emission_type
+        detected_emission_type, oi_qe, al_qe, auto_qe_enabled = self.load_image_tab.get_qe_settings()
+        self.current_emission_type = detected_emission_type
+        
+        if detected_emission_type == 'Unknown':
+            reply = QMessageBox.question(
+                self, "Unknown Emission Type",
+                f"Could not detect emission type from filename.\n\n"
+                f"The simulation will proceed with {'manual QE from YAML' if not auto_qe_enabled else 'manual QE from YAML (auto QE disabled for unknown emissions)'}.\n\n"
+                f"Continue?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
         
         try:
             # Store original data if not already stored
@@ -3133,11 +3269,11 @@ class MainWindow(QMainWindow):
             self.simulation_in_progress = True
             self.apply_button.setEnabled(False)
             
-            # Create worker that uses the same logic as batch processing but with manual QE control
+            # Create worker with detected emission type
             self.worker = SingleFrameWorker(
                 config=self.config,
                 image_data=self.data,
-                emission_type=emission_type,
+                detected_emission_type=detected_emission_type,
                 oi_qe=oi_qe,
                 al_qe=al_qe,
                 auto_qe_enabled=auto_qe_enabled,
@@ -3149,10 +3285,22 @@ class MainWindow(QMainWindow):
             self.worker.progress.connect(self.update_progress)
             self.worker.start()
             
-            qe_mode = f"QE: {oi_qe if emission_type == 'OI' else al_qe:.3f}" if auto_qe_enabled else "Manual QE"
-            self.info_label.setText(f"Simulation in progress ({emission_type} emission, {qe_mode})...")
+            if auto_qe_enabled and detected_emission_type != 'Unknown':
+                applied_qe = oi_qe if detected_emission_type == 'OI' else al_qe
+                qe_mode = f"QE: {applied_qe:.3f}"
+            else:
+                qe_mode = "Manual QE"
+            
+            self.info_label.setText(f"Simulation in progress ({detected_emission_type} emission, {qe_mode})...")
             self.info_label.setStyleSheet("color: blue; font-weight: bold; padding: 8px; background-color: #e8f0ff; border-radius: 4px;")
             self.statusBar().showMessage("Running exposure mode simulation...")
+            
+        except Exception as exc:
+            self.simulation_in_progress = False
+            self.apply_button.setEnabled(True)
+            error_details = traceback.format_exc()
+            error_dialog = create_error_dialog(self, "Error", f"Failed to start simulation:\n{str(exc)}\n\nDetails:\n{error_details}")
+            error_dialog.exec_()
             
         except Exception as exc:
             self.simulation_in_progress = False
