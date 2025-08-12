@@ -72,6 +72,24 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 ---
 
 ## Usage — Quick Start
+### A) DebriSim (SSA Workflow)
+1. **Earth Texture** – Place `earth.jpg` (NASA Blue Marble) in the project root.  
+2. **Define Satellites** – *Satellites Tab →* add a manual satellite or generate a **Walker constellation**. Configure `a, e, i, RAAN, ω, ν`.  
+3. **Load Debris Data** – *Debris Tab →* load CSV/Excel with columns `Time, Iteration, Assembly_ID, Latitude, Longitude, Altitude`.  
+4. **Import Emissions** – *Emissions Tab →* load intensity data (`OI_emissions_atomic`, `AlI_1/2_emissions_atomic`).  
+5. **Visualise** – *Visualisation Tab →* inspect the 3‑D Earth scene; choose target & epoch.  
+6. **Analyse Visibility** – *Visibility Analysis Tab →* run **Two-Horizon** analysis; export access periods/matrices.  
+7. **Photon Conversion Tab**
+      **Select Satellite** – Choose observing satellite from dropdown.  
+      **Track Debris** – Select debris object to center camera on.  
+      **Configure Sensor** – Set aperture, focal length, pixel pitch, sensor size, exposure time.  
+      **Set Emission Parameters** – Configure separate quantum efficiency and filter transmission for:
+      - **OI** (777 nm) emissions
+      - **Al** (395 nm) emissions  
+      **Background Illumination** – Optional uniform background *(typical: `1e-6 W/sr` for Earth vicinity)*.  
+      **Single Frame** – Click **Compute** to generate dual-view images *(OI left, Al right)* with WGS84 coordinate transformations.  
+      **Batch Processing** – Use **Track Main Body + Longest Survivor** for automated multi-timestep analysis with optional satellite handoff (Camera automatically selects any satellite that has the closest view of the debris).  
+      **Save Results** – Export as NumPy arrays (`.npy`) and/or FITS files (`.fits`) with full metadata.
 
 ### A) Sensor Simulation & Analysis (Pyxel Workflow)
 1. **Load Detector Config** – *File → Open YAML* and select your `.yaml/.yml` detector file.  
@@ -81,16 +99,6 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 5. **Analyse** – Open **Statistics Tab** for ADU stats; use **Time Series** if available.  
 6. **Export** – Click **Export CSV** for results.  
 7. **Batch** – *Batch Processing Tab →* select input folder (multiple `.npy`), set output folder, run; results stream to CSV with full metadata.
-
-### B) DebriSim (SSA Workflow)
-1. **Earth Texture** – Place `earth.jpg` (NASA Blue Marble) in the project root.  
-2. **Define Satellites** – *Satellites Tab →* add a manual satellite or generate a **Walker constellation**. Configure `a, e, i, RAAN, ω, ν`.  
-3. **Load Debris Data** – *Debris Tab →* load CSV/Excel with columns `Time, Iteration, Assembly_ID, Latitude, Longitude, Altitude`.  
-4. **Import Emissions** – *Emissions Tab →* load intensity data (`OI_emissions_atomic`, `AlI_1/2_emissions_atomic`).  
-5. **Visualise** – *Visualisation Tab →* inspect the 3‑D Earth scene; choose target & epoch.  
-6. **Analyse Visibility** – *Visibility Analysis Tab →* run **Two-Horizon** analysis; export access periods/matrices.  
-
----
 
 ## Institutions
 Developed in collaboration with:
