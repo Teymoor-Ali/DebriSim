@@ -29,14 +29,22 @@ DebriSim is a Python-based application for **space-situational awareness**, debr
 
 ### Python Dependencies
 ```
-PyQt5>=5.15.0
-numpy>=1.20.0
-pandas>=1.3.0
-astropy>=4.0.0
-poliastro>=0.15.0
-pyqtgraph>=0.12.0
-matplotlib>=3.3.0
-scipy>=1.7.0
+numpy==2.2.6
+pandas==2.3.0
+astropy==7.1.0
+poliastro==0.7.0
+PyQt5==5.15.11
+pyqtgraph==0.13.7
+matplotlib==3.10.3
+qt-material==2.17
+openpyxl==3.1.5
+xlrd==2.0.2
+scipy==1.16.0
+PyOpenGL==3.1.9
+pyxel_sim==2.11.2
+PyYAML==6.0.2
+numba==0.61.2
+pillow==11.3.0
 ```
 
 ---
