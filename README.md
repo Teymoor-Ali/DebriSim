@@ -80,7 +80,7 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 ---
 
 ## Usage — Quick Start
-### A) DebriSim (SSA Workflow)
+### A) Satellite Simulator
 1. **Earth Texture** – Place `earth.jpg` (NASA Blue Marble) in the project root.  
 2. **Define Satellites** – *Satellites Tab →* add a manual satellite or generate a **Walker constellation**. Configure `a, e, i, RAAN, ω, ν`.  
 3. **Load Debris Data** – *Debris Tab →* load CSV/Excel with columns `Time, Iteration, Assembly_ID, Latitude, Longitude, Altitude`.  
@@ -100,7 +100,7 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
       **Batch Processing** – Use **Track Main Body + Longest Survivor** for automated multi-timestep analysis with optional satellite handoff (Camera automatically selects any satellite that has the closest view of the debris).  
       **Save Results** – Export as NumPy arrays (`.npy`) and/or FITS files (`.fits`) with full metadata.
 
-### A) Sensor Simulation & Analysis (Pyxel Workflow)
+### A) Sensor Simulator
 1. **Load Detector Config** – *File → Open YAML* and select your `.yaml/.yml` detector file.  
 2. **Import Data** – *Load Image Tab →* choose `.npy` or `.fits`. Emission type (OI/Al) is auto-detected.  
 3. **Quantum Efficiency** – Use **Auto Mode** (OI=0.3, Al=0.7) or **Manual Mode** (from YAML).  
