@@ -80,6 +80,7 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 5. **Visualise** – *Visualisation Tab →* inspect the 3‑D Earth scene; choose target & epoch.  
 6. **Analyse Visibility** – *Visibility Analysis Tab →* run **Two-Horizon** analysis; export access periods/matrices.  
 7. **Photon Conversion Tab**
+
       **Select Satellite** – Choose observing satellite from dropdown.  
       **Track Debris** – Select debris object to center camera on.  
       **Configure Sensor** – Set aperture, focal length, pixel pitch, sensor size, exposure time.  
