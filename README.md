@@ -1,8 +1,7 @@
-# DebriSim –  Space Debris Tracking/Emission Simulator & Sensor Simulation
----
+# DebriSim – Space Debris Tracking / Emission Simulator & Sensor Simulation
 
 ## Overview
-DebriSim is a Python-based application for **space-situational awareness**, debris tracking, and satellite mission planning. It delivers real-time 3D visualisation, precise coordinate-system transformations, and detailed sensor modelling―all packaged in a responsive GUI.
+DebriSim is a Python-based application for **space-situational awareness**, debris tracking, and satellite mission planning. It delivers real-time 3D visualisation, precise coordinate-system transformations, and detailed sensor modelling — all packaged in a responsive GUI.
 
 ### Key Capabilities
 - **Satellite Constellation Management** – Design and simulate Walker constellations  
@@ -10,7 +9,7 @@ DebriSim is a Python-based application for **space-situational awareness**, debr
 - **Debris-Detection Simulation** – Photon-to-electron conversion modelling for optical sensors  
 - **Visibility Analysis** – Two-horizon access criterion with Earth-occlusion calculations  
 - **Data Pipeline** – Import/export debris and emissions data in multiple formats  
-- **Sensor Simulation** – Simulator Sensoe Noise with Pyxel Library  
+- **Sensor Simulation** – Simulates sensor noise with the Pyxel library  
 
 ---
 
@@ -72,29 +71,24 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 
 ---
 
-## Usage ― Quick Start
+## Usage — Quick Start
 
-1. **Earth Texture**  
-   Place `earth.jpg` (NASA Blue Marble) in the project root.
+### A) Sensor Simulation & Analysis (Pyxel Workflow)
+1. **Load Detector Config** – *File → Open YAML* and select your `.yaml/.yml` detector file.  
+2. **Import Data** – *Load Image Tab →* choose `.npy` or `.fits`. Emission type (OI/Al) is auto-detected.  
+3. **Quantum Efficiency** – Use **Auto Mode** (OI=0.3, Al=0.7) or **Manual Mode** (from YAML).  
+4. **Run Single Exposure** – Click **Perform Exposure** to simulate sensor response.  
+5. **Analyse** – Open **Statistics Tab** for ADU stats; use **Time Series** if available.  
+6. **Export** – Click **Export CSV** for results.  
+7. **Batch** – *Batch Processing Tab →* select input folder (multiple `.npy`), set output folder, run; results stream to CSV with full metadata.
 
-2. **Define Satellites**  
-   *Satellites Tab →* Add a manual satellite **or** generate a Walker constellation.  
-   Configure `a, e, i, RAAN, ω, ν`.
-
-3. **Load Debris Data**  
-   *Debris Tab →* Load CSV/Excel with columns  
-   `Time, Iteration, Assembly_ID, Latitude, Longitude, Altitude`.
-
-4. **Import Emissions**  
-   *Emissions Tab →* Load intensity data (`OI_emissions_atomic`, `AlI_1/2_emissions_atomic`).
-
-5. **Visualise**  
-   *Visualisation Tab →* Inspect the 3-D Earth scene; choose target & epoch.
-
-6. **Analyse Visibility**  
-   *Visibility Analysis Tab →* Run Two-Horizon analysis, then export access periods / matrices.
-
----
+### B) DebriSim (SSA Workflow)
+1. **Earth Texture** – Place `earth.jpg` (NASA Blue Marble) in the project root.  
+2. **Define Satellites** – *Satellites Tab →* add a manual satellite or generate a **Walker constellation**. Configure `a, e, i, RAAN, ω, ν`.  
+3. **Load Debris Data** – *Debris Tab →* load CSV/Excel with columns `Time, Iteration, Assembly_ID, Latitude, Longitude, Altitude`.  
+4. **Import Emissions** – *Emissions Tab →* load intensity data (`OI_emissions_atomic`, `AlI_1/2_emissions_atomic`).  
+5. **Visualise** – *Visualisation Tab →* inspect the 3‑D Earth scene; choose target & epoch.  
+6. **Analyse Visibility** – *Visibility Analysis Tab →* run **Two-Horizon** analysis; export access periods/matrices.  
 
 ---
 
@@ -102,5 +96,5 @@ wget https://visibleearth.nasa.gov/images/57752/.../57753l -O earth.jpg
 Developed in collaboration with:
 
 - Fraunhofer Institute  
-- University of Strathclyde
+- University of Strathclyde  
 - European Space Agency
