@@ -1,7 +1,7 @@
 # DebriSim – Space Debris Tracking / Emission Simulator & Sensor Simulation
 
 ## Overview
-DebriSim is a Python-based application for **space-situational awareness**, debris tracking, and satellite mission planning. It delivers real-time 3D visualisation, precise coordinate-system transformations, and detailed sensor modelling — all packaged in a responsive GUI.
+DebriSim is a Python-based application for **space-situational awareness**, debris tracking, and satellite mission planning. It delivers real-time 3D visualisation, precise coordinate-system transformations, and detailed sensor modelling.
 
 ### Key Capabilities
 - **Satellite Constellation Management** – Design and simulate Walker constellations  
